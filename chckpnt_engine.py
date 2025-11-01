@@ -8,10 +8,11 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
 
+
 class UniversalCheckpointManager:
-    """Enhanced checkpoint manager with time-based features and snapshots"""
+    """Complete checkpoint system - handles all save/load operations"""
     
-    def __init__(self, checkpoint_dir='checkpoints'):  # FIXED: parameter name
+    def __init__(self, checkpoint_dir='checkpoints'):
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(checkpoint_dir, exist_ok=True)
         
@@ -20,7 +21,7 @@ class UniversalCheckpointManager:
 
     def save_checkpoint(self, epoch, model, optimizer, batch_idx, model_name,
                        loss, accuracy, elapsed_time, is_timeout=False):
-        """Save checkpoint with exact training state"""
+        """Save complete training state"""
         try:
             checkpoint = {
                 'epoch': epoch,
@@ -33,33 +34,33 @@ class UniversalCheckpointManager:
                 'timestamp': datetime.now().isoformat()
             }
 
-            # Save metadata as JSON
-            checkpoint_file = os.path.join(self.checkpoint_dir, f'time_checkpoint_{model_name}.json')
+            # Save metadata
+            checkpoint_file = os.path.join(self.checkpoint_dir, f'checkpoint_{model_name}.json')
             with open(checkpoint_file, 'w') as f:
                 json.dump(checkpoint, f, indent=2)
 
-            # Save model weights separately (binary)
-            model_file = os.path.join(self.checkpoint_dir, f'time_model_{model_name}.pth')
+            # Save model weights
+            model_file = os.path.join(self.checkpoint_dir, f'model_{model_name}.pth')
             torch.save(model.state_dict(), model_file)
 
-            # Save optimizer state separately (binary)
-            optimizer_file = os.path.join(self.checkpoint_dir, f'time_optimizer_{model_name}.pth')
+            # Save optimizer state
+            optimizer_file = os.path.join(self.checkpoint_dir, f'optimizer_{model_name}.pth')
             torch.save(optimizer.state_dict(), optimizer_file)
 
             status = "TIMEOUT" if is_timeout else "PROGRESS"
-            print(f"[HOOK] ✓ {status} checkpoint saved: {model_name} at batch {batch_idx}")
+            print(f"✓ {status} checkpoint saved: {model_name} at batch {batch_idx}")
             return True
 
         except Exception as e:
-            print(f"[HOOK] ✗ Error saving checkpoint: {e}")
+            print(f"✗ Error saving checkpoint: {e}")
             return False
 
     def load_checkpoint(self, model, optimizer, model_name):
-        """Load the latest checkpoint for a model"""
+        """Load complete training state"""
         try:
-            checkpoint_file = os.path.join(self.checkpoint_dir, f'time_checkpoint_{model_name}.json')
-            model_file = os.path.join(self.checkpoint_dir, f'time_model_{model_name}.pth')
-            optimizer_file = os.path.join(self.checkpoint_dir, f'time_optimizer_{model_name}.pth')
+            checkpoint_file = os.path.join(self.checkpoint_dir, f'checkpoint_{model_name}.json')
+            model_file = os.path.join(self.checkpoint_dir, f'model_{model_name}.pth')
+            optimizer_file = os.path.join(self.checkpoint_dir, f'optimizer_{model_name}.pth')
 
             if not os.path.exists(checkpoint_file):
                 return None
@@ -76,16 +77,16 @@ class UniversalCheckpointManager:
             if os.path.exists(optimizer_file):
                 optimizer.load_state_dict(torch.load(optimizer_file))
 
-            print(f"[HOOK] ✓ Loaded checkpoint: Epoch {checkpoint_data['epoch']}, "
-                  f"Batch {checkpoint_data['batch_idx']}, {checkpoint_data['model_name']}")
+            print(f"✓ Loaded checkpoint: Epoch {checkpoint_data['epoch']}, "
+                  f"Batch {checkpoint_data['batch_idx']}")
             return checkpoint_data
 
         except Exception as e:
-            print(f"[HOOK] ✗ Error loading checkpoint: {e}")
+            print(f"✗ Error loading checkpoint: {e}")
             return None
 
     def save_snapshot(self, images, outputs, labels, model_name, batch_idx, elapsed_time):
-        """Save visual snapshot of current progress"""
+        """Save visual progress snapshot"""
         try:
             if len(images) == 0:
                 return False
@@ -134,19 +135,19 @@ class UniversalCheckpointManager:
             plt.tight_layout()
             plt.subplots_adjust(top=0.9)
 
-            snapshot_file = os.path.join(self.checkpoint_dir, f'time_snapshot_{model_name}.png')
+            snapshot_file = os.path.join(self.checkpoint_dir, f'snapshot_{model_name}.png')
             plt.savefig(snapshot_file, dpi=150, bbox_inches='tight')
             plt.close()
 
-            print(f"[HOOK] ✓ Snapshot saved: {snapshot_file}")
+            print(f"✓ Snapshot saved: {snapshot_file}")
             return True
 
         except Exception as e:
-            print(f"[HOOK] ✗ Error saving snapshot: {e}")
+            print(f"✗ Error saving snapshot: {e}")
             return False
 
     def save_session_info(self, current_model_index, start_time, total_elapsed):
-        """Save session information"""
+        """Save session management info"""
         session_info = {
             'current_model_index': current_model_index,
             'session_start_time': start_time,
@@ -159,7 +160,7 @@ class UniversalCheckpointManager:
             json.dump(session_info, f, indent=2)
 
     def load_session_info(self):
-        """Load session information"""
+        """Load session management info"""
         try:
             session_file = os.path.join(self.checkpoint_dir, 'session_info.json')
             with open(session_file, 'r') as f:
@@ -167,15 +168,9 @@ class UniversalCheckpointManager:
         except:
             return None
 
-    def get_time_until_checkpoint(self, last_checkpoint_time, checkpoint_interval):
-        """Calculate time until next checkpoint"""
-        current_time = time.time()
-        time_since_last = current_time - last_checkpoint_time
-        return max(0, checkpoint_interval - time_since_last)
-
 
 class StateTracker:
-    """Enhanced state tracker with session management"""
+    """Tracks and shares training state between main thread and checkpoint system"""
     def __init__(self):
         self.epoch = 0
         self.batch_idx = 0
@@ -187,9 +182,10 @@ class StateTracker:
         self.snapshot_outputs = []
         self.snapshot_labels = []
         self.lock = threading.Lock()
-        self.timers = []  # FIXED: Added timers attribute
+        self.timers = []
 
     def update_state(self, epoch, batch_idx, running_loss, running_accuracy):
+        """Update current training state (called from main training loop)"""
         with self.lock:
             self.epoch = epoch
             self.batch_idx = batch_idx
@@ -197,16 +193,19 @@ class StateTracker:
             self.running_accuracy = running_accuracy
 
     def get_state(self):
+        """Get current training state (called by checkpoint system)"""
         with self.lock:
             return (self.epoch, self.batch_idx, self.running_loss, 
                    self.running_accuracy, self.session_start_time, 
                    self.total_elapsed_time)
 
     def update_session_time(self, total_elapsed):
+        """Update total training time"""
         with self.lock:
             self.total_elapsed_time = total_elapsed
 
     def add_snapshot_data(self, image, output, label):
+        """Collect data for visual snapshots"""
         with self.lock:
             if len(self.snapshot_images) < 8:
                 self.snapshot_images.append(image)
@@ -214,88 +213,82 @@ class StateTracker:
                 self.snapshot_labels.append(label)
 
     def get_snapshot_data(self):
+        """Get collected snapshot data"""
         with self.lock:
             return (self.snapshot_images.copy(), self.snapshot_outputs.copy(), 
                    self.snapshot_labels.copy())
 
 
-class CheckpointTimer(threading.Thread):
-    """Enhanced timer with session time limits and snapshot capabilities"""
+class AutonomousCheckpointer:
+    """Autonomous checkpointing system - runs in background thread"""
     
-    def __init__(self, interval, kind, save_dir, models_optimizers, manager, max_session_time=900):
-        super().__init__(daemon=True)
-        self.interval = interval
-        self.kind = kind
-        self.save_dir = save_dir
-        self.models_optimizers = models_optimizers  # {'name': (model, optimizer, tracker)}
-        self.manager = manager
-        self.max_session_time = max_session_time
+    def __init__(self, config, models_optimizers):
+        self.config = config
+        self.models_optimizers = models_optimizers
+        self.manager = UniversalCheckpointManager(
+            checkpoint_dir=config['checkpoint']['save_dir']
+        )
+        self.tracker = StateTracker()
         self.is_running = True
-        self.session_start_time = time.time()
-        os.makedirs(save_dir, exist_ok=True)
-
-    def run(self):
-        print(f"[HOOK] 🤖 Enhanced checkpoint timer started. Interval: {self.interval}s, Max session: {self.max_session_time}s")
         
-        # Load session info
+        # Store timer reference in tracker
+        self.tracker.timers.append(self)
+
+    def start(self):
+        """Start the autonomous checkpointing system"""
+        print("🚀 Starting Autonomous Checkpointing System...")
+        print(f"   Checkpoint interval: {self.config['checkpoint']['checkpoint_interval']}s")
+        print(f"   Max session time: {self.config['checkpoint']['max_session_time']}s")
+        print(f"   Save directory: {self.config['checkpoint']['save_dir']}")
+        
+        # Start background thread
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        
+        return self.tracker
+
+    def _run(self):
+        """Main checkpointing loop (runs in background thread)"""
         session_info = self.manager.load_session_info()
         if session_info:
             total_elapsed = session_info['total_elapsed_time']
-            print(f"[HOOK] ✓ Resumed session with total time: {total_elapsed/60:.1f} minutes")
+            print(f"✓ Resumed session - Total time: {total_elapsed/60:.1f} minutes")
         else:
             total_elapsed = 0
-            print("[HOOK] ✓ Starting new training session")
+            print("✓ Starting new training session")
 
+        session_start = time.time()
         last_checkpoint_time = time.time()
         
         while self.is_running:
-            time.sleep(1)  # Check every second for better time monitoring
+            time.sleep(1)  # Check every second
             
             current_time = time.time()
-            current_session_time = current_time - self.session_start_time
-            total_elapsed_so_far = total_elapsed + current_session_time
-            time_remaining = self.max_session_time - current_session_time
+            session_duration = current_time - session_start
+            total_elapsed_so_far = total_elapsed + session_duration
+            time_remaining = self.config['checkpoint']['max_session_time'] - session_duration
 
-            # Update tracker with current total elapsed time
-            for _, (_, _, tracker) in self.models_optimizers.items():
-                tracker.update_session_time(total_elapsed_so_far)
-                # FIXED: Add this timer to tracker's timers list
-                if self not in tracker.timers:
-                    tracker.timers.append(self)
+            # Update tracker with current time
+            self.tracker.update_session_time(total_elapsed_so_far)
 
-            # Check for regular checkpoint interval
-            if current_time - last_checkpoint_time >= self.interval:
-                print(f"\n[HOOK] ⏰ Regular checkpoint triggered...")
-                self._save_progress_checkpoint(total_elapsed_so_far, False)
+            # Regular checkpoint interval
+            if current_time - last_checkpoint_time >= self.config['checkpoint']['checkpoint_interval']:
+                self._save_checkpoints(total_elapsed_so_far, False)
                 last_checkpoint_time = current_time
 
-            # Check for session timeout (with 15-second buffer)
-            if time_remaining <= 15 and time_remaining > 0:
-                print(f"\n[HOOK] 🚨 TIME LIMIT APPROACHING: {time_remaining:.1f}s remaining")
-                self._save_progress_checkpoint(total_elapsed_so_far, True)
-                
-                # Save session info
-                current_model_index = 0  # You might want to track this per model
-                self.manager.save_session_info(current_model_index, 
-                                             self.session_start_time, 
-                                             total_elapsed_so_far)
-                
-                print(f"[HOOK] 💾 Final checkpoint saved. Session completed.")
+            # Session time limit
+            if (self.config['checkpoint']['max_session_time'] > 0 and 
+                time_remaining <= 15 and time_remaining > 0):
+                print(f"⏰ Time limit approaching: {time_remaining:.1f}s remaining")
+                self._save_checkpoints(total_elapsed_so_far, True)
+                self.manager.save_session_info(0, session_start, total_elapsed_so_far)
                 self.is_running = False
                 break
 
-            # Stop if max session time reached
-            if current_session_time >= self.max_session_time:
-                print(f"\n[HOOK] ⏰ Maximum session time reached")
-                self._save_progress_checkpoint(total_elapsed_so_far, True)
-                self.manager.save_session_info(0, self.session_start_time, total_elapsed_so_far)
-                self.is_running = False
-                break
-
-    def _save_progress_checkpoint(self, total_elapsed, is_timeout=False):
-        """Save checkpoint for all models"""
-        for model_name, (model, optimizer, tracker) in self.models_optimizers.items():
-            epoch, batch_idx, running_loss, running_accuracy, _, _ = tracker.get_state()
+    def _save_checkpoints(self, total_elapsed, is_timeout):
+        """Save checkpoints for all models"""
+        for model_name, (model, optimizer, _) in self.models_optimizers.items():
+            epoch, batch_idx, running_loss, running_accuracy, _, _ = self.tracker.get_state()
             
             self.manager.save_checkpoint(
                 epoch=epoch,
@@ -309,17 +302,19 @@ class CheckpointTimer(threading.Thread):
                 is_timeout=is_timeout
             )
             
-            # Save snapshot if we have data
-            snapshot_images, snapshot_outputs, snapshot_labels = tracker.get_snapshot_data()
-            if snapshot_images:
-                self.manager.save_snapshot(
-                    snapshot_images, 
-                    torch.stack(snapshot_outputs) if snapshot_outputs else [],
-                    torch.stack(snapshot_labels) if snapshot_labels else [],
-                    model_name,
-                    batch_idx,
-                    total_elapsed
-                )
+            # Save snapshot if enabled
+            if self.config['checkpoint']['enable_snapshots']:
+                snapshot_images, snapshot_outputs, snapshot_labels = self.tracker.get_snapshot_data()
+                if snapshot_images:
+                    self.manager.save_snapshot(
+                        snapshot_images, 
+                        torch.stack(snapshot_outputs) if snapshot_outputs else [],
+                        torch.stack(snapshot_labels) if snapshot_labels else [],
+                        model_name,
+                        batch_idx,
+                        total_elapsed
+                    )
 
     def stop(self):
+        """Stop the checkpointing system"""
         self.is_running = False

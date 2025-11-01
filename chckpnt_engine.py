@@ -112,4 +112,5 @@ class CheckpointTimer(threading.Thread):
                 )
 
     def stop(self):
+
         self.is_running = False

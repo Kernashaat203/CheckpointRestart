@@ -1,0 +1,14 @@
+checkpoint:
+  kind: pytorch
+  checkpoint_interval: 10 # seconds
+  save_dir: "./checkpoints"
+  max_session_time: 900    # 15 minutes (kept for training script context)
+
+training:
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  max_epochs: 10
+
+
+

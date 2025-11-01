@@ -1,0 +1,115 @@
+import threading
+import time
+import os
+import torch
+from datetime import datetime
+import json
+import torch.nn as nn
+
+# --- UNIVERSAL CHECKPOINT MANAGER (I/O Focus) ---
+class UniversalCheckpointManager:
+    """Handles the actual file I/O for saving and loading state."""
+
+    def __init__(self, checkpoint_dir='checkpoints'):
+        self.checkpoint_dir = checkpoint_dir
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+    def save_checkpoint(self, epoch, model, optimizer, batch_idx, model_name, loss, accuracy, kind, save_dir):
+        """Saves a checkpoint using the framework kind."""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # --- Framework Switch (PyTorch) ---
+            if kind == 'pytorch' and isinstance(model, nn.Module):
+                checkpoint_file = os.path.join(save_dir, f'ckpt_{model_name}_{timestamp}.json')
+                model_file = os.path.join(save_dir, f'model_{model_name}_{timestamp}.pth')
+                optimizer_file = os.path.join(save_dir, f'optim_{model_name}_{timestamp}.pth')
+
+                # Save metadata
+                metadata = {
+                    'epoch': epoch,
+                    'batch_idx': batch_idx,
+                    'model_name': model_name,
+                    'loss': float(loss) if loss is not None else None,
+                    'accuracy': float(accuracy) if accuracy is not None else None,
+                    'timestamp': timestamp
+                }
+                with open(checkpoint_file, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+
+                # Save weights and optimizer state
+                torch.save(model.state_dict(), model_file)
+                torch.save(optimizer.state_dict(), optimizer_file)
+
+                print(f"[HOOK] ✅ AUTOSAVE saved: {model_name} at batch {batch_idx}")
+                return True
+            # --- End Framework Switch ---
+
+        except Exception as e:
+            print(f"[HOOK] ✗ Error saving checkpoint: {e}")
+            return False
+
+
+# --- STATE TRACKER (Helper class to share state with the background thread) ---
+class StateTracker:
+    """Safely shares key metrics between the main thread and the hook thread."""
+
+    def __init__(self):
+        self.epoch = 0
+        self.batch_idx = 0
+        self.running_loss = 0.0
+        self.running_accuracy = 0.0
+        self.lock = threading.Lock()
+
+    def update_state(self, epoch, batch_idx, running_loss, running_accuracy):
+        with self.lock:
+            self.epoch = epoch
+            self.batch_idx = batch_idx
+            self.running_loss = running_loss
+            self.running_accuracy = running_accuracy
+
+    def get_state(self):
+        with self.lock:
+            return self.epoch, self.batch_idx, self.running_loss, self.running_accuracy
+
+
+# --- THE AUTONOMOUS CHECKPOINT HOOK (Timer Focus) ---
+class CheckpointTimer(threading.Thread):
+    """Runs a background thread to trigger saves at regular intervals."""
+
+    def __init__(self, interval, kind, save_dir, models_optimizers, manager):
+        super().__init__(daemon=True)
+        self.interval = interval
+        self.kind = kind
+        self.save_dir = save_dir
+        # models_optimizers is a dict: {'name': (model, optimizer, tracker)}
+        self.models_optimizers = models_optimizers
+        self.manager = manager
+        self.is_running = True
+        os.makedirs(save_dir, exist_ok=True)
+
+    def run(self):
+        print(f"[HOOK] 🤖 Checkpoint timer started. Interval: {self.interval}s.")
+        while self.is_running:
+            time.sleep(self.interval)
+
+            print(f"\n[HOOK] ⏰ Time's up! Triggering save...")
+
+            for model_name, (model, optimizer, tracker) in self.models_optimizers.items():
+                # Get the latest state from the main thread
+                epoch, batch_idx, running_loss, running_accuracy = tracker.get_state()
+
+                self.manager.save_checkpoint(
+                    epoch=epoch,
+                    model=model,
+                    optimizer=optimizer,
+                    batch_idx=batch_idx,
+                    model_name=model_name,
+                    loss=running_loss,
+                    accuracy=running_accuracy,
+                    kind=self.kind,
+                    save_dir=self.save_dir
+                )
+
+    def stop(self):
+        self.is_running = False

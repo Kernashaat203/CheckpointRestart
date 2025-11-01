@@ -7,6 +7,7 @@ import json
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
+import yaml
 
 
 class UniversalCheckpointManager:
@@ -222,20 +223,33 @@ class StateTracker:
 class AutonomousCheckpointer:
     """Autonomous checkpointing system - runs in background thread"""
     
-    def __init__(self, config, models_optimizers):
-        self.config = config
-        self.models_optimizers = models_optimizers
+    def __init__(self, config_path="config.yaml"):
+        # Load configuration
+        with open(config_path, "r") as f:
+            self.config = yaml.safe_load(f)
+            
         self.manager = UniversalCheckpointManager(
-            checkpoint_dir=config['checkpoint']['save_dir']
+            checkpoint_dir=self.config['checkpoint']['save_dir']
         )
         self.tracker = StateTracker()
         self.is_running = True
+        self.models_optimizers = {}
         
         # Store timer reference in tracker
         self.tracker.timers.append(self)
 
+    def register_models(self, models_dict):
+        """Register models and optimizers for checkpointing"""
+        self.models_optimizers = {
+            name: (model, optimizer, self.tracker)
+            for name, (model, optimizer) in models_dict.items()
+        }
+
     def start(self):
         """Start the autonomous checkpointing system"""
+        if not self.models_optimizers:
+            raise ValueError("No models registered. Call register_models() first.")
+            
         print("🚀 Starting Autonomous Checkpointing System...")
         print(f"   Checkpoint interval: {self.config['checkpoint']['checkpoint_interval']}s")
         print(f"   Max session time: {self.config['checkpoint']['max_session_time']}s")
@@ -318,3 +332,11 @@ class AutonomousCheckpointer:
     def stop(self):
         """Stop the checkpointing system"""
         self.is_running = False
+
+    def get_tracker(self):
+        """Get the state tracker for training loop"""
+        return self.tracker
+
+    def get_config(self):
+        """Get the configuration"""
+        return self.config

@@ -8,6 +8,8 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
+import types
+import inspect
 
 
 class UniversalCheckpointManager:
@@ -341,6 +343,57 @@ class AutonomousCheckpointer:
         """Get the configuration"""
         return self.config
 
+    def wrap_training_function(self, training_func):
+        """Wrap any training function to automatically update checkpoint state"""
+        def wrapped_training(*args, **kwargs):
+            # Store the original function for internal use
+            original_func = training_func
+            
+            # Create a wrapper that captures training metrics
+            def training_with_metrics(*inner_args, **inner_kwargs):
+                # Extract model from args or kwargs
+                model = None
+                if len(inner_args) > 0:
+                    model = inner_args[0]
+                elif 'model' in inner_kwargs:
+                    model = inner_kwargs['model']
+                
+                if model is None:
+                    print("⚠️ Could not automatically detect model in training function")
+                    return original_func(*inner_args, **inner_kwargs)
+                
+                # Monkey-patch the training step to capture metrics
+                original_train = model.training
+                original_zero_grad = model.zero_grad
+                
+                current_epoch = 1
+                current_batch = 0
+                
+                def custom_zero_grad():
+                    original_zero_grad()
+                    
+                def custom_train(mode=True):
+                    nonlocal current_epoch
+                    if mode:
+                        current_epoch += 1
+                        current_batch = 0
+                    return original_train(mode)
+                
+                model.zero_grad = custom_zero_grad
+                model.train = custom_train.__get__(model, type(model))
+                
+                try:
+                    result = original_func(*inner_args, **inner_kwargs)
+                    return result
+                finally:
+                    # Restore original methods
+                    model.zero_grad = original_zero_grad
+                    model.train = original_train
+                    
+            return training_with_metrics(*args, **kwargs)
+        
+        return wrapped_training
+
 
 # Global instance for easy access
 _checkpointer = None
@@ -386,3 +439,69 @@ def stop_checkpointing():
     global _checkpointer
     if _checkpointer:
         _checkpointer.stop()
+
+def auto_inject_checkpointing(training_func):
+    """
+    Decorator to automatically inject checkpointing into any training function
+    Usage:
+        @auto_inject_checkpointing
+        def train_model(model, optimizer, trainloader, device, max_epochs=20):
+            # user's original training code
+    """
+    def wrapper(*args, **kwargs):
+        global _checkpointer
+        
+        if _checkpointer is None:
+            print("⚠️ Checkpointing not enabled. Running without checkpointing.")
+            return training_func(*args, **kwargs)
+        
+        # Extract model from args/kwargs
+        model = None
+        if len(args) > 0:
+            model = args[0]
+        elif 'model' in kwargs:
+            model = kwargs['model']
+        
+        if model is None:
+            print("⚠️ Could not find model parameter. Running without checkpointing.")
+            return training_func(*args, **kwargs)
+        
+        # Store original methods
+        original_zero_grad = model.zero_grad
+        original_train_method = model.train
+        
+        # Track training state
+        current_epoch = 1
+        current_batch = 0
+        epoch_tracker = {}
+        
+        def patched_zero_grad():
+            original_zero_grad()
+            nonlocal current_batch
+            current_batch += 1
+            
+        def patched_train(mode=True):
+            nonlocal current_epoch, current_batch
+            if mode:  # Entering training mode
+                current_epoch += 1
+                current_batch = 0
+                print(f"🔁 Checkpoint system: Tracking epoch {current_epoch}")
+            return original_train_method(mode)
+        
+        # Apply patches
+        model.zero_grad = patched_zero_grad
+        model.train = types.MethodType(patched_train, model)
+        
+        try:
+            # Run the original training function
+            result = training_func(*args, **kwargs)
+            return result
+        except Exception as e:
+            print(f"❌ Training error: {e}")
+            raise
+        finally:
+            # Restore original methods
+            model.zero_grad = original_zero_grad
+            model.train = original_train_method
+            
+    return wrapper

@@ -1,11 +1,16 @@
+# User Configuration File - Edit this to customize checkpoint behavior
 checkpoint:
   kind: pytorch
-  checkpoint_interval: 300  # 5 minutes in seconds
+  checkpoint_interval: 300
+  max_session_time: 900
   save_dir: "./checkpoints"
-  max_session_time: 900     # 15 minutes in seconds
+  enable_snapshots: true
+  snapshot_interval: 200
 
 training:
   batch_size: 64
   learning_rate: 0.001
   weight_decay: 0.0001
   max_epochs: 20
+  model_type: "multitask_cnn"
+  num_classes: 10

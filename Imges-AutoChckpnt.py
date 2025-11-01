@@ -4,15 +4,6 @@ import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
 import time
-import yaml
-
-# Import the autonomous checkpointing system
-from chckpnt_engine import AutonomousCheckpointer
-
-# Load user configuration
-with open("config.yaml", "r") as f:
-    config = yaml.safe_load(f)
-
 
 # Pure Model Definition (No checkpointing logic)
 class MultiTaskCNN(nn.Module):
@@ -86,143 +77,74 @@ def calculate_accuracy(outputs, labels):
     return 100.0 * correct / labels.size(0)
 
 
-def train_model(model, optimizer, trainloader, device, tracker, model_name):
+def train_model(model, optimizer, trainloader, device, max_epochs=20):
     """
     Pure training loop - contains only training logic
-    Checkpointing is handled automatically by the system
+    No checkpointing code here!
     """
     criterion_cls = nn.CrossEntropyLoss()
     criterion_reg = nn.MSELoss()
     
-    # Check if we're resuming from checkpoint
-    checkpoint_loaded = tracker.get_state()[0] > 0
-    start_epoch = tracker.get_state()[0] if checkpoint_loaded else 1
-    start_batch = tracker.get_state()[1] if checkpoint_loaded else 0
-    
-    if checkpoint_loaded:
-        print(f"↻ Resuming {model_name} from epoch {start_epoch}, batch {start_batch}")
-    else:
-        print(f"▶ Starting {model_name} from beginning")
+    print(f"▶ Starting training from beginning")
 
     total_batches = len(trainloader)
-    running_loss = tracker.get_state()[2] if checkpoint_loaded else 0.0
+    running_loss = 0.0
     running_total = 0
 
-    print(f"\n--- Training {model_name} ---")
+    print(f"\n--- Training Model ---")
     
-    try:
-        model.train()
-        
-        for epoch in range(start_epoch, config['training']['max_epochs'] + 1):
-            for batch_idx, (inputs, labels) in enumerate(trainloader):
-                # Skip already processed batches when resuming
-                if batch_idx < start_batch:
-                    continue
+    model.train()
+    
+    for epoch in range(1, max_epochs + 1):
+        for batch_idx, (inputs, labels) in enumerate(trainloader):
+            # Pure training step
+            inputs, labels = inputs.to(device), labels.to(device)
+            optimizer.zero_grad()
+            
+            class_output, reg_output = model(inputs)
+            loss_cls = criterion_cls(class_output, labels)
+            fake_target = torch.randn(labels.size(0), 1).to(device)
+            loss_reg = criterion_reg(reg_output, fake_target)
+            loss = loss_cls + 0.1 * loss_reg
 
-                # Check if checkpoint system is still running
-                if not any(timer.is_running for timer in tracker.timers):
-                    print("⏹️ Session completed - stopping training")
-                    return
+            loss.backward()
+            optimizer.step()
 
-                # Pure training step
-                inputs, labels = inputs.to(device), labels.to(device)
-                optimizer.zero_grad()
-                
-                class_output, reg_output = model(inputs)
-                loss_cls = criterion_cls(class_output, labels)
-                fake_target = torch.randn(labels.size(0), 1).to(device)
-                loss_reg = criterion_reg(reg_output, fake_target)
-                loss = loss_cls + 0.1 * loss_reg
+            # Update running statistics
+            running_loss = 0.95 * running_loss + 0.05 * loss.item() if running_total > 0 else loss.item()
+            accuracy = calculate_accuracy(class_output, labels)
+            running_total += labels.size(0)
 
-                loss.backward()
-                optimizer.step()
+            # Progress reporting
+            if batch_idx % 20 == 0:
+                print(f'Epoch {epoch}, Batch {batch_idx}/{total_batches}: '
+                      f'Loss={running_loss:.4f}, Acc={accuracy:.2f}%')
 
-                # Update running statistics
-                running_loss = 0.95 * running_loss + 0.05 * loss.item() if running_total > 0 else loss.item()
-                accuracy = calculate_accuracy(class_output, labels)
-                running_total += labels.size(0)
+            time.sleep(0.001)  # Simulate training time
 
-                # 🔄 ONLY INTERACTION WITH CHECKPOINT SYSTEM: update state
-                tracker.update_state(epoch, batch_idx, running_loss, accuracy)
-                
-                # Collect snapshot data if enabled
-                if (config['checkpoint']['enable_snapshots'] and 
-                    batch_idx % config['checkpoint']['snapshot_interval'] == 0):
-                    tracker.add_snapshot_data(inputs[0], class_output[0], labels[0])
-
-                # Progress reporting
-                if batch_idx % 20 == 0:
-                    _, _, _, _, session_start, total_elapsed = tracker.get_state()
-                    current_time = time.time() - session_start
-                    print(f'Epoch {epoch}, Batch {batch_idx}/{total_batches}: '
-                          f'Loss={running_loss:.4f}, Acc={accuracy:.2f}%, '
-                          f'Time={current_time/60:.1f}m')
-
-                time.sleep(0.001)  # Simulate training time
-
-            # Reset for next epoch
-            start_batch = 0
-            print(f"✓ Completed epoch {epoch}")
-
-    except Exception as e:
-        print(f"✗ Training error: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"✓ Completed epoch {epoch}")
 
 
-# Main Execution
+# Main Execution - Pure training setup
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # Pure model setup
-    models = {
-        'classification_model': MultiTaskCNN(num_classes=config['training']['num_classes']).to(device),
-        'feature_model': MultiTaskCNN(num_classes=config['training']['num_classes']).to(device)
-    }
-
-    optimizers = {
-        name: optim.Adam(model.parameters(), 
-                        lr=config['training']['learning_rate'],
-                        weight_decay=config['training']['weight_decay'])
-        for name, model in models.items()
-    }
+    model = MultiTaskCNN(num_classes=10).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.0001)
 
     # Pure data loading
-    trainloader = load_cifar10(config['training']['batch_size'])
+    trainloader = load_cifar10(batch_size=64)
 
-    # 🚀 Initialize autonomous checkpointing system (ONE-TIME SETUP)
-    checkpointer = AutonomousCheckpointer(
-        config=config,
-        models_optimizers={
-            name: (model, optimizer, None)  # Tracker will be added by system
-            for name, (model, optimizer) in zip(models.keys(), zip(models.values(), optimizers.values()))
-        }
+    # Pure training execution
+    print(f"\n🎯 Starting training...")
+    train_model(
+        model=model,
+        optimizer=optimizer,
+        trainloader=trainloader,
+        device=device,
+        max_epochs=20
     )
-    
-    # Start the system and get the state tracker
-    tracker = checkpointer.start()
 
-    try:
-        # Pure training execution
-        for model_name, model in models.items():
-            print(f"\n🎯 Training {model_name}...")
-            train_model(
-                model=model,
-                optimizer=optimizers[model_name],
-                trainloader=trainloader,
-                device=device,
-                tracker=tracker,
-                model_name=model_name
-            )
-
-        print("\n✅ All models trained successfully!")
-
-    except KeyboardInterrupt:
-        print("\n⏹️ Training interrupted by user")
-    except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        checkpointer.stop()
+    print("\n✅ Training completed successfully!")

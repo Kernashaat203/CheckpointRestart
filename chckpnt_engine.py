@@ -11,7 +11,7 @@ import numpy as np
 class UniversalCheckpointManager:
     """Enhanced checkpoint manager with time-based features and snapshots"""
     
-    def __init__(self, checkpoint_dir='checkpoints'):
+    def __init__(self, checkpoint_dir='checkpoints'):  # FIXED: parameter name
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(checkpoint_dir, exist_ok=True)
         
@@ -187,6 +187,7 @@ class StateTracker:
         self.snapshot_outputs = []
         self.snapshot_labels = []
         self.lock = threading.Lock()
+        self.timers = []  # FIXED: Added timers attribute
 
     def update_state(self, epoch, batch_idx, running_loss, running_accuracy):
         with self.lock:
@@ -245,6 +246,8 @@ class CheckpointTimer(threading.Thread):
             total_elapsed = 0
             print("[HOOK] ✓ Starting new training session")
 
+        last_checkpoint_time = time.time()
+        
         while self.is_running:
             time.sleep(1)  # Check every second for better time monitoring
             
@@ -256,11 +259,15 @@ class CheckpointTimer(threading.Thread):
             # Update tracker with current total elapsed time
             for _, (_, _, tracker) in self.models_optimizers.items():
                 tracker.update_session_time(total_elapsed_so_far)
+                # FIXED: Add this timer to tracker's timers list
+                if self not in tracker.timers:
+                    tracker.timers.append(self)
 
             # Check for regular checkpoint interval
-            if int(current_time) % self.interval == 0:
+            if current_time - last_checkpoint_time >= self.interval:
                 print(f"\n[HOOK] ⏰ Regular checkpoint triggered...")
                 self._save_progress_checkpoint(total_elapsed_so_far, False)
+                last_checkpoint_time = current_time
 
             # Check for session timeout (with 15-second buffer)
             if time_remaining <= 15 and time_remaining > 0:
@@ -274,6 +281,14 @@ class CheckpointTimer(threading.Thread):
                                              total_elapsed_so_far)
                 
                 print(f"[HOOK] 💾 Final checkpoint saved. Session completed.")
+                self.is_running = False
+                break
+
+            # Stop if max session time reached
+            if current_session_time >= self.max_session_time:
+                print(f"\n[HOOK] ⏰ Maximum session time reached")
+                self._save_progress_checkpoint(total_elapsed_so_far, True)
+                self.manager.save_session_info(0, self.session_start_time, total_elapsed_so_far)
                 self.is_running = False
                 break
 

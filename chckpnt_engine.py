@@ -505,3 +505,47 @@ def auto_inject_checkpointing(training_func):
             model.train = original_train_method
             
     return wrapper
+# Global instance for easy access
+_checkpointer = None
+
+def enable_checkpointing(config_path="config.yaml"):
+    """
+    Enable autonomous checkpointing for the training session
+    Usage:
+        checkpointer = enable_checkpointing("config.yaml")
+        checkpointer.register_models({'model1': (model, optimizer)})
+        tracker = checkpointer.start()
+    """
+    global _checkpointer
+    _checkpointer = AutonomousCheckpointer(config_path)
+    return _checkpointer
+
+def get_checkpointer():
+    """Get the global checkpointer instance"""
+    return _checkpointer
+
+def update_training_state(epoch, batch_idx, loss, accuracy):
+    """
+    Update training state - call this from your training loop
+    Usage in training loop:
+        update_training_state(epoch, batch_idx, loss.item(), accuracy)
+    """
+    global _checkpointer
+    if _checkpointer and _checkpointer.tracker:
+        _checkpointer.tracker.update_state(epoch, batch_idx, loss, accuracy)
+
+def add_snapshot_data(image, output, label):
+    """
+    Add snapshot data - call this from your training loop
+    Usage in training loop:
+        add_snapshot_data(inputs[0], outputs[0], labels[0])
+    """
+    global _checkpointer
+    if _checkpointer and _checkpointer.tracker:
+        _checkpointer.tracker.add_snapshot_data(image, output, label)
+
+def stop_checkpointing():
+    """Stop the checkpointing system"""
+    global _checkpointer
+    if _checkpointer:
+        _checkpointer.stop()

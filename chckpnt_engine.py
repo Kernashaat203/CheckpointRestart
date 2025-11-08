@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 import types
-import inspect
 
 
 class UniversalCheckpointManager:
@@ -38,16 +37,16 @@ class UniversalCheckpointManager:
             }
 
             # Save metadata
-            checkpoint_file = os.path.join(self.checkpoint_dir, f'checkpoint_{model_name}.json')
+            checkpoint_file = os.path.join(self.checkpoint_dir, f'time_checkpoint_{model_name}.json')
             with open(checkpoint_file, 'w') as f:
                 json.dump(checkpoint, f, indent=2)
 
             # Save model weights
-            model_file = os.path.join(self.checkpoint_dir, f'model_{model_name}.pth')
+            model_file = os.path.join(self.checkpoint_dir, f'time_model_{model_name}.pth')
             torch.save(model.state_dict(), model_file)
 
             # Save optimizer state
-            optimizer_file = os.path.join(self.checkpoint_dir, f'optimizer_{model_name}.pth')
+            optimizer_file = os.path.join(self.checkpoint_dir, f'time_optimizer_{model_name}.pth')
             torch.save(optimizer.state_dict(), optimizer_file)
 
             status = "TIMEOUT" if is_timeout else "PROGRESS"
@@ -61,9 +60,9 @@ class UniversalCheckpointManager:
     def load_checkpoint(self, model, optimizer, model_name):
         """Load complete training state"""
         try:
-            checkpoint_file = os.path.join(self.checkpoint_dir, f'checkpoint_{model_name}.json')
-            model_file = os.path.join(self.checkpoint_dir, f'model_{model_name}.pth')
-            optimizer_file = os.path.join(self.checkpoint_dir, f'optimizer_{model_name}.pth')
+            checkpoint_file = os.path.join(self.checkpoint_dir, f'time_checkpoint_{model_name}.json')
+            model_file = os.path.join(self.checkpoint_dir, f'time_model_{model_name}.pth')
+            optimizer_file = os.path.join(self.checkpoint_dir, f'time_optimizer_{model_name}.pth')
 
             if not os.path.exists(checkpoint_file):
                 return None
@@ -81,7 +80,7 @@ class UniversalCheckpointManager:
                 optimizer.load_state_dict(torch.load(optimizer_file))
 
             print(f"✓ Loaded checkpoint: Epoch {checkpoint_data['epoch']}, "
-                  f"Batch {checkpoint_data['batch_idx']}")
+                  f"Batch {checkpoint_data['batch_idx']}, {checkpoint_data['model_name']}")
             return checkpoint_data
 
         except Exception as e:
@@ -138,7 +137,7 @@ class UniversalCheckpointManager:
             plt.tight_layout()
             plt.subplots_adjust(top=0.9)
 
-            snapshot_file = os.path.join(self.checkpoint_dir, f'snapshot_{model_name}.png')
+            snapshot_file = os.path.join(self.checkpoint_dir, f'time_snapshot_{model_name}.png')
             plt.savefig(snapshot_file, dpi=150, bbox_inches='tight')
             plt.close()
 
@@ -170,6 +169,12 @@ class UniversalCheckpointManager:
                 return json.load(f)
         except:
             return None
+
+    def get_time_until_checkpoint(self, last_checkpoint_time, checkpoint_interval):
+        """Calculate time until next checkpoint"""
+        current_time = time.time()
+        time_since_last = current_time - last_checkpoint_time
+        return max(0, checkpoint_interval - time_since_last)
 
 
 class StateTracker:
@@ -343,168 +348,7 @@ class AutonomousCheckpointer:
         """Get the configuration"""
         return self.config
 
-    def wrap_training_function(self, training_func):
-        """Wrap any training function to automatically update checkpoint state"""
-        def wrapped_training(*args, **kwargs):
-            # Store the original function for internal use
-            original_func = training_func
-            
-            # Create a wrapper that captures training metrics
-            def training_with_metrics(*inner_args, **inner_kwargs):
-                # Extract model from args or kwargs
-                model = None
-                if len(inner_args) > 0:
-                    model = inner_args[0]
-                elif 'model' in inner_kwargs:
-                    model = inner_kwargs['model']
-                
-                if model is None:
-                    print("⚠️ Could not automatically detect model in training function")
-                    return original_func(*inner_args, **inner_kwargs)
-                
-                # Monkey-patch the training step to capture metrics
-                original_train = model.training
-                original_zero_grad = model.zero_grad
-                
-                current_epoch = 1
-                current_batch = 0
-                
-                def custom_zero_grad():
-                    original_zero_grad()
-                    
-                def custom_train(mode=True):
-                    nonlocal current_epoch
-                    if mode:
-                        current_epoch += 1
-                        current_batch = 0
-                    return original_train(mode)
-                
-                model.zero_grad = custom_zero_grad
-                model.train = custom_train.__get__(model, type(model))
-                
-                try:
-                    result = original_func(*inner_args, **inner_kwargs)
-                    return result
-                finally:
-                    # Restore original methods
-                    model.zero_grad = original_zero_grad
-                    model.train = original_train
-                    
-            return training_with_metrics(*args, **kwargs)
-        
-        return wrapped_training
 
-
-# Global instance for easy access
-_checkpointer = None
-
-def enable_checkpointing(config_path="config.yaml"):
-    """
-    Enable autonomous checkpointing for the training session
-    Usage:
-        checkpointer = enable_checkpointing("config.yaml")
-        checkpointer.register_models({'model1': (model, optimizer)})
-        tracker = checkpointer.start()
-    """
-    global _checkpointer
-    _checkpointer = AutonomousCheckpointer(config_path)
-    return _checkpointer
-
-def get_checkpointer():
-    """Get the global checkpointer instance"""
-    return _checkpointer
-
-def update_training_state(epoch, batch_idx, loss, accuracy):
-    """
-    Update training state - call this from your training loop
-    Usage in training loop:
-        update_training_state(epoch, batch_idx, loss.item(), accuracy)
-    """
-    global _checkpointer
-    if _checkpointer and _checkpointer.tracker:
-        _checkpointer.tracker.update_state(epoch, batch_idx, loss, accuracy)
-
-def add_snapshot_data(image, output, label):
-    """
-    Add snapshot data - call this from your training loop
-    Usage in training loop:
-        add_snapshot_data(inputs[0], outputs[0], labels[0])
-    """
-    global _checkpointer
-    if _checkpointer and _checkpointer.tracker:
-        _checkpointer.tracker.add_snapshot_data(image, output, label)
-
-def stop_checkpointing():
-    """Stop the checkpointing system"""
-    global _checkpointer
-    if _checkpointer:
-        _checkpointer.stop()
-
-def auto_inject_checkpointing(training_func):
-    """
-    Decorator to automatically inject checkpointing into any training function
-    Usage:
-        @auto_inject_checkpointing
-        def train_model(model, optimizer, trainloader, device, max_epochs=20):
-            # user's original training code
-    """
-    def wrapper(*args, **kwargs):
-        global _checkpointer
-        
-        if _checkpointer is None:
-            print("⚠️ Checkpointing not enabled. Running without checkpointing.")
-            return training_func(*args, **kwargs)
-        
-        # Extract model from args/kwargs
-        model = None
-        if len(args) > 0:
-            model = args[0]
-        elif 'model' in kwargs:
-            model = kwargs['model']
-        
-        if model is None:
-            print("⚠️ Could not find model parameter. Running without checkpointing.")
-            return training_func(*args, **kwargs)
-        
-        # Store original methods
-        original_zero_grad = model.zero_grad
-        original_train_method = model.train
-        
-        # Track training state
-        current_epoch = 1
-        current_batch = 0
-        epoch_tracker = {}
-        
-        def patched_zero_grad():
-            original_zero_grad()
-            nonlocal current_batch
-            current_batch += 1
-            
-        def patched_train(mode=True):
-            nonlocal current_epoch, current_batch
-            if mode:  # Entering training mode
-                current_epoch += 1
-                current_batch = 0
-                print(f"🔁 Checkpoint system: Tracking epoch {current_epoch}")
-            return original_train_method(mode)
-        
-        # Apply patches
-        model.zero_grad = patched_zero_grad
-        model.train = types.MethodType(patched_train, model)
-        
-        try:
-            # Run the original training function
-            result = training_func(*args, **kwargs)
-            return result
-        except Exception as e:
-            print(f"❌ Training error: {e}")
-            raise
-        finally:
-            # Restore original methods
-            model.zero_grad = original_zero_grad
-            model.train = original_train_method
-            
-    return wrapper
 # Global instance for easy access
 _checkpointer = None
 

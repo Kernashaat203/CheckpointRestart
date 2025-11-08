@@ -1,8 +1,8 @@
 # User Configuration File - Edit this to customize checkpoint behavior
 checkpoint:
   kind: pytorch
-  checkpoint_interval: 300
-  max_session_time: 900
+  checkpoint_interval: 300    # Save every 5 minutes
+  max_session_time: 900       # Stop after 15 minutes
   save_dir: "./checkpoints"
   enable_snapshots: true
   snapshot_interval: 200
